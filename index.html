@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GMP AND LOOSE ITEM CONTROL MONITORING</title>
+<style>
+:root{--green:#176b45;--green2:#eaf5ee;--ink:#20312a;--muted:#64736b;--line:#d7e2da;--red:#b42318;--amber:#9a6700}
+*{box-sizing:border-box}body{margin:0;background:#f3f7f4;color:var(--ink);font:14px/1.45 Arial,sans-serif}
+header{background:linear-gradient(120deg,#124d35,#218052);color:white;padding:25px max(20px,calc((100% - 1200px)/2))}
+header h1{margin:0;font-size:clamp(20px,3vw,29px);letter-spacing:.3px}header p{margin:7px 0 0;opacity:.9}
+main{max-width:1200px;margin:22px auto;padding:0 16px 50px}.tabs{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px}
+button,.tab{border:0;border-radius:8px;padding:10px 14px;background:var(--green);color:white;font-weight:700;cursor:pointer}
+.tab{background:#e3eee7;color:#23563d}.tab.active{background:var(--green);color:white}
+.panel{background:white;border:1px solid var(--line);border-radius:13px;padding:20px;margin-bottom:16px;box-shadow:0 2px 9px #183b2810}
+h2{font-size:18px;margin:0 0 15px;color:#174c34}h3{font-size:15px;margin:18px 0 9px}
+.grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:13px}
+.field{display:flex;flex-direction:column;gap:5px}.field label{font-weight:700;font-size:12px;color:#40554a}
+input,select,textarea{width:100%;padding:10px;border:1px solid #cbd8cf;border-radius:7px;font:inherit;background:white;color:var(--ink)}
+textarea{min-height:68px;resize:vertical}.wide{grid-column:1/-1}
+.checkgrid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
+.check{display:flex;align-items:center;gap:8px;padding:9px;border:1px solid var(--line);border-radius:7px;background:#fbfdfb}
+.check input{width:auto}.check span{font-size:13px}
+.actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:15px}.secondary{background:#e8efe9;color:#214d36}.danger{background:#a62e27}.small{padding:7px 10px;font-size:12px}
+.note{padding:10px 12px;background:#fff8e7;border-left:3px solid #d69e22;border-radius:5px;color:#684d12;margin:12px 0}
+.muted{color:var(--muted);font-size:12px}.hidden{display:none!important}
+table{width:100%;border-collapse:collapse;font-size:12px}th,td{padding:9px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top}th{background:#edf5ef;color:#28533b}
+.status{display:inline-block;padding:3px 8px;border-radius:20px;font-weight:700;font-size:11px}.pending{background:#fff2d6;color:#805700}.verified{background:#e1f4e8;color:#17633d}.rejected{background:#fde8e7;color:#a12620}
+.signature{border:2px solid #9aada0;border-radius:4px;background:#fcfefc;touch-action:none;display:block;width:100%;max-width:640px;height:240px}.signature-tools{max-width:640px}
+.signature-tools{display:flex;justify-content:space-between;align-items:center;margin:7px 0}
+@media(max-width:760px){.grid,.checkgrid{grid-template-columns:1fr 1fr}}@media(max-width:500px){.grid,.checkgrid{grid-template-columns:1fr}}
+@media print{body{background:white}header{background:#176b45!important;-webkit-print-color-adjust:exact;print-color-adjust:exact}main{max-width:none;margin:0;padding:10px}.tabs,.no-print,.actions{display:none!important}.panel{box-shadow:none;break-inside:avoid}.print-only{display:block!important}}
+.print-only{display:none}
+label.check{cursor:pointer}.check input{width:18px;height:18px;flex:none}
+@media print{tr,img{page-break-inside:avoid}}
+@page{size:landscape;margin:10mm}
+</style>
+</head>
+<body>
+<header><h1>GMP AND LOOSE ITEM CONTROL MONITORING</h1><p>Personnel entry inspection • Loose item declaration • Independent verification</p></header>
+<main>
+<div class="tabs no-print">
+<button class="tab active" data-tab="register">Personnel Registration</button>
+<button class="tab" data-tab="verify">Reviewer Verification</button>
+<button class="tab" data-tab="records">Monitoring Records</button>
+<button class="tab" data-tab="weekly">Reviewed By (Weekly)</button>
+<button class="tab" data-tab="violators">GMP Violators</button>
+</div>
+
+<section id="register" class="screen">
+<div id="regMsg" class="note hidden" style="font-weight:700"></div>
+<div class="panel">
+<h2>1. Incoming Personnel Registration</h2>
+<div class="grid">
+<div class="field"><label>Personnel Name *</label><input id="person" placeholder="Full name"></div>
+<div class="field"><label>Time In *</label><input type="datetime-local" id="timeIn"></div>
+<div class="field"><label>Agency *</label><select id="agency"><option value="">Select agency</option><option>Workbridge</option><option>Top Jinzi</option><option>Multi Career</option></select></div>
+<div class="field"><label>Area to Enter *</label><select id="area"><option value="">Select area</option><option>Production</option><option>Warehouse</option><option>Production and Warehouse</option></select></div>
+<div class="field"><label>Position / Purpose</label><input id="purpose" placeholder="Position or reason for entry"></div>
+<div class="field"><label>Assigned Dress Code *</label><select id="dress"><option value="">Select assigned dress code</option><option>Production Uniform</option><option>Warehouse Uniform</option><option>Visitor / Contractor PPE</option><option>Other (specify in remarks)</option></select></div>
+</div>
+<div class="muted" style="margin-top:10px">Time In is filled with the current time and can be adjusted. Time Out is logged later from Monitoring Records once the person has been allowed in.</div>
+</div>
+
+<div class="panel">
+<h2>2. GMP Personnel Entry Checklist</h2>
+<p class="muted">Tick every item that is satisfied. Leave an item unticked if it is not met; the reviewer will see it flagged.</p>
+<div class="checkgrid" id="gmpChecks"></div>
+<div class="actions"><button type="button" class="secondary small" id="checkAll">Tick All</button></div>
+<div class="field" style="margin-top:12px"><label>GMP Inspection Remarks / Corrective Action</label><textarea id="gmpRemarks" placeholder="Record any deficiency and action taken before entry."></textarea></div>
+</div>
+
+<div class="panel">
+<h2>3. Loose Item Declaration</h2>
+<p class="muted">Declare all loose items carried into the production or warehouse building, including approved tools, stationery, personal items, and other objects.</p>
+<div class="field"><label>Loose Items</label><textarea id="looseItems" placeholder="Type all loose items here (e.g. blue pen, cutter, thermometer). Leave blank if none."></textarea></div>
+<p class="muted">Leave blank if no loose items are being brought in.</p>
+<label class="check" style="margin-top:12px"><input type="checkbox" id="declaration"><span><b>I declare that the information and loose items listed above are complete and accurate</b></span></label>
+<div class="actions"><button id="submitRecord">Submit Registration</button><button class="secondary" id="resetForm">Clear Form</button></div>
+</div>
+</section>
+
+<section id="verify" class="screen hidden">
+<div class="panel">
+<h2>Reviewer Verification</h2>
+<p class="muted">Registered personnel waiting for an entry decision are listed below. Tap a name to review it.</p>
+<div id="pendingList"></div>
+</div>
+</section>
+
+<section id="weekly" class="screen hidden">
+<div class="panel">
+<h2>Weekly Review</h2>
+<p class="muted">One review covers the whole week (Monday to Sunday). All registrations in the week must have an entry decision first.</p>
+<div class="grid">
+<div class="field"><label>Select any date in the week</label><input type="date" id="weekDate"></div>
+<div class="field"><label>Week Covered</label><input id="weekLabel" readonly></div>
+</div>
+<div id="weekSummary" style="margin-top:14px"></div>
+<div class="grid" style="margin-top:15px"><div class="field"><label>Reviewed By *</label><input id="weeklyName" placeholder="Type full name"></div></div>
+<h3>Signature *</h3>
+<canvas id="signature" class="signature" aria-label="Draw signature"></canvas>
+<div class="signature-tools"><span class="muted">Sign on the screen using finger, mouse, or stylus.</span><button type="button" class="secondary small" id="clearSignature">Clear Signature</button></div>
+<div class="actions"><button id="saveWeekly">Submit Weekly Review</button></div>
+</div>
+</section>
+
+<section id="records" class="screen hidden">
+<div class="panel">
+<h2>Monitoring Records</h2>
+<div class="grid no-print">
+<div class="field"><label>Filter by Status</label><select id="filterStatus"><option>All</option><option>Pending Verification</option><option>Allow Enter</option><option>Not Permitted</option><option>Pending Weekly Review</option></select></div>
+<div class="field"><label>Search Personnel / Agency</label><input id="searchRecords" placeholder="Search records"></div>
+<div class="field"><label>&nbsp;</label><button id="refreshRecords" class="secondary">Refresh Records</button></div>
+</div>
+<div style="overflow:auto;margin-top:14px"><table><thead><tr><th>Timestamp</th><th>Personnel</th><th>Agency / Area</th><th>Loose Items</th><th>Time In / Out</th><th>Entry Decision</th><th>Weekly Reviewed By</th><th class="no-print">Action</th></tr></thead><tbody id="recordsRows"></tbody></table></div>
+<div class="actions no-print"><button id="exportCsv" class="secondary">Download CSV</button><button id="exportAllPdf">Generate Full Report (1 file)</button></div>
+<p class="muted no-print">Full Report combines all records, grouped by week with the weekly reviewer and signature, in one document. For one person, select View / PDF. In the print dialog, choose “Save as PDF”.</p>
+</div>
+</section>
+
+<section id="violators" class="screen hidden">
+<div class="panel">
+<h2>GMP Violators</h2>
+<p class="muted" id="violGenerated"></p>
+<div class="grid no-print"><div class="field"><label>Filter by Violation</label><select id="filterViolation"></select></div><div class="field"><label>Search Name / Agency</label><input id="searchViolators" placeholder="Search violators"></div></div>
+<div id="violSummary" style="margin-top:12px"></div>
+<div style="overflow:auto;margin-top:10px"><table style="font-size:12px"><thead><tr><th>#</th><th>Date / Time</th><th>Name</th><th>Agency / Area</th><th>Violation</th><th>Remarks</th><th>Verified By</th></tr></thead><tbody id="violRows"></tbody></table></div>
+<div class="actions no-print"><button onclick="window.print()">Print / Save as PDF</button><button class="secondary" id="exportViol">Download CSV</button></div>
+</div>
+</section>
+<section id="report" class="hidden">
+<div class="panel" id="reportContent"></div>
+<div class="actions no-print"><button onclick="window.print()">Print / Save as PDF</button><button class="secondary" id="backRecords">Back to Records</button></div>
+</section>
+<footer class="muted" style="text-align:center;padding:10px">Local browser system • Records are stored on this device/browser only. Export and back up records regularly.</footer>
+</main>
+<script src="script.js"></script>
+</body></html>
