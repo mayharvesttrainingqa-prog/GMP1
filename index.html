@@ -1,1060 +1,239 @@
-const checks = [
-  'Facemask properly worn',
-  'Headcap properly worn and hair contained',
-  'Rubber boots clean and appropriate',
-  'Gloves used where required; no tear or damage',
-  'Apron properly worn and clean',
-  'Assigned dress code followed',
-  'Fingernails short and clean',
-  'No cuts or wounds, or properly covered and controlled',
-  'No jewelry or unauthorized accessories',
-  'Proper hand washing completed',
-  'No signs or symptoms of illness',
-  'Uniform: no frayed cuffs',
-  'Uniform: no external pockets'
-];
-
-const VIOLATIONS = [
-  'A1 - Uniform',
-  'A2 - Face Mask',
-  'A3 - Hand Washing',
-  'A4 - Dirty Boots',
-  'A5 - Excessive perfume',
-  'A6 - Cell Phone',
-  'A7 - Bringing foods',
-  'A8 - Others (Not mentioned)',
-  'B - Behavior',
-  'C - Cleaning and Sanitation',
-  'D - Cross Contamination',
-  'E - Make-up / cosmetics'
-];
-
-const DECL = 'I declare that the information and loose items listed above are complete and accurate';
-
-const $ = id => document.getElementById(id);
-const fmt = d => d ? new Date(d).toLocaleString() : '—';
-const tIn = r => r.timeIn || r.timestamp;
-
-function nowLocal() {
-  let d = new Date();
-  return ymd(d) + 'T' +
-    String(d.getHours()).padStart(2, '0') + ':' +
-    String(d.getMinutes()).padStart(2, '0');
-}
-
-function readJSON(key, fallback) {
-  try {
-    const value = localStorage.getItem(key);
-    return value ? JSON.parse(value) : fallback;
-  } catch (error) {
-    console.error('Unable to read saved data:', key, error);
-    return fallback;
-  }
-}
-
-function normalizeRecord(r) {
-  const sourceChecks = Array.isArray(r.checks)
-    ? r.checks
-    : (Array.isArray(r.checklist) ? r.checklist : []);
-
-  const normalizedChecks = sourceChecks.map(c => ({
-    label: c.label || c.item || 'Unspecified checklist item',
-    ok: c.ok !== undefined
-      ? !!c.ok
-      : (c.passed !== undefined ? !!c.passed : !!c.checked && c.result !== 'Fail')
-  }));
-
-  let status = r.status || r.decision || 'Pending Verification';
-
-  if (status === 'Verified - Entry Authorized') status = 'Allow Enter';
-  if (status === 'Rejected - Entry Not Authorized') status = 'Not Permitted';
-  if (status === 'Returned for Correction') status = 'Pending Verification';
-
-  return {
-    ...r,
-    id: String(r.id || ('GMP-' + Date.now() + '-' + Math.random().toString(36).slice(2, 7))),
-    timestamp: r.timestamp || r.timeIn || new Date().toISOString(),
-    timeIn: r.timeIn || r.timestamp || new Date().toISOString(),
-    timeOut: r.timeOut || '',
-    person: r.person || r.name || 'Unknown personnel',
-    agency: r.agency || r.dept || '—',
-    area: r.area || '—',
-    purpose: r.purpose || '',
-    dress: r.dress || '',
-    checks: normalizedChecks,
-    gmpRemarks: r.gmpRemarks || r.remarks || '',
-    looseItems: typeof r.looseItems === 'string'
-      ? r.looseItems
-      : (Array.isArray(r.items)
-        ? r.items.map(i => (i.description || 'Item') + (i.quantity ? ' x' + i.quantity : '')).join(', ')
-        : ''),
-    declaration: r.declaration || DECL,
-    status,
-    verifiedBy: r.verifiedBy || r.reviewer || '',
-    violation: r.violation || '',
-    remarks: r.remarks || '',
-    autoHold: r.autoHold !== undefined
-      ? r.autoHold
-      : normalizedChecks.some(c => !c.ok)
-  };
-}
-
-let records = readJSON('gmpLooseItemRecords', null);
-
-if (!Array.isArray(records)) {
-  records = readJSON('GMP_LOOSE_ITEM_RECORDS_V1', []);
-}
-
-records = Array.isArray(records) ? records.map(normalizeRecord) : [];
-
-let weeks = readJSON('gmpWeeklyReviews', null);
-
-if (!weeks || typeof weeks !== 'object' || Array.isArray(weeks)) {
-  weeks = readJSON('GMP_WEEKLY_REVIEWS_V1', {});
-}
-
-if (!weeks || typeof weeks !== 'object' || Array.isArray(weeks)) {
-  weeks = {};
-}
-
-let currentReport = null;
-
-$('gmpChecks').innerHTML = checks.map((c, i) =>
-  `<label class="check">
-    <input type="checkbox" id="g${i}">
-    <span>${c}</span>
-  </label>`
-).join('');
-
-$('checkAll').onclick = () =>
-  checks.forEach((_, i) => $('g' + i).checked = true);
-
-function save() {
-  localStorage.setItem('gmpLooseItemRecords', JSON.stringify(records));
-  localStorage.setItem('gmpWeeklyReviews', JSON.stringify(weeks));
-}
-
-function esc(s) {
-  return String(s ?? '').replace(/[&<>"']/g, c => ({
-    '&': '&amp;',
-    '<': '&lt;',
-    '>': '&gt;',
-    '"': '&quot;',
-    "'": '&#39;'
-  }[c]));
-}
-
-const ymd = d =>
-  d.getFullYear() + '-' +
-  String(d.getMonth() + 1).padStart(2, '0') + '-' +
-  String(d.getDate()).padStart(2, '0');
-
-function wk(d) {
-  d = new Date(d);
-  d = new Date(d.getFullYear(), d.getMonth(), d.getDate());
-  d.setDate(d.getDate() - (d.getDay() + 6) % 7);
-  return ymd(d);
-}
-
-function wkLabel(k) {
-  let s = new Date(k + 'T00:00:00');
-  let e = new Date(s);
-  e.setDate(e.getDate() + 6);
-
-  let f = x => x.toLocaleDateString(undefined, {
-    month: 'short',
-    day: 'numeric',
-    year: 'numeric'
-  });
-
-  return f(s) + ' – ' + f(e);
-}
-
-const wr = r => weeks[wk(tIn(r))];
-
-$('gmpChecks').innerHTML = checks.map((c, i) =>
-  `<label class="check">
-    <input type="checkbox" id="g${i}">
-    <span>${esc(c)}</span>
-  </label>`
-).join('');
-
-function showTab(tab) {
-  document.querySelectorAll('.screen').forEach(x => x.classList.add('hidden'));
-  $('report').classList.add('hidden');
-
-  $(tab).classList.remove('hidden');
-
-  document.querySelectorAll('.tab').forEach(b =>
-    b.classList.toggle('active', b.dataset.tab === tab)
-  );
-
-  if (tab === 'verify') refreshReview();
-  if (tab === 'weekly') initWeekly();
-  if (tab === 'records') renderRecords();
-  if (tab === 'violators') renderViolators();
-}
-
-document.querySelectorAll('.tab').forEach(b =>
-  b.onclick = () => showTab(b.dataset.tab)
-);
-
-$('submitRecord').onclick = () => {
-  for (let id of ['person', 'timeIn', 'agency', 'area', 'dress']) {
-    if (!$(id).value.trim()) {
-      alert('Please complete all required fields.');
-      $(id).focus();
-      return;
-    }
-  }
-
-  const enteredTime = new Date($('timeIn').value);
-
-  if (Number.isNaN(enteredTime.getTime())) {
-    alert('Please enter a valid Time In.');
-    $('timeIn').focus();
-    return;
-  }
-
-  if (enteredTime.getTime() > Date.now()) {
-    alert('Time In cannot be in the future.');
-    $('timeIn').focus();
-    return;
-  }
-
-  if (!$('declaration').checked) {
-    alert('Tick the declaration before submitting.');
-    return;
-  }
-
-  let gmp = checks.map((label, i) => ({
-    label,
-    ok: $('g' + i).checked
-  }));
-
-  let miss = gmp.filter(x => !x.ok).length;
-
-  if (miss && !confirm(miss + ' GMP checklist item(s) are not ticked. Submit anyway?')) {
-    return;
-  }
-
-  let rec = {
-    id: 'GMP-' + Date.now() + '-' + Math.random().toString(36).slice(2, 7),
-    timestamp: new Date().toISOString(),
-    person: $('person').value.trim(),
-    timeIn: enteredTime.toISOString(),
-    timeOut: '',
-    agency: $('agency').value,
-    area: $('area').value,
-    purpose: $('purpose').value.trim(),
-    dress: $('dress').value,
-    checks: gmp,
-    gmpRemarks: $('gmpRemarks').value.trim(),
-    looseItems: $('looseItems').value.trim(),
-    declaration: DECL,
-    status: 'Pending Verification',
-    remarks: '',
-    autoHold: miss > 0
-  };
-
-  records.unshift(rec);
-  save();
-  resetForm();
-
-  window.scrollTo({ top: 0, behavior: 'smooth' });
-
-  let m = $('regMsg');
-  m.textContent = 'Registration submitted for ' + rec.person +
-    '. It is now waiting for the reviewer.';
-
-  m.classList.remove('hidden');
-
-  clearTimeout(window.regT);
-  window.regT = setTimeout(() => m.classList.add('hidden'), 8000);
-};
-
-function resetForm() {
-  $('timeIn').value = nowLocal();
-
-  ['person', 'purpose', 'gmpRemarks'].forEach(id => $(id).value = '');
-
-  ['agency', 'area', 'dress'].forEach(id => $(id).selectedIndex = 0);
-
-  $('declaration').checked = false;
-
-  checks.forEach((_, i) => $('g' + i).checked = false);
-
-  $('looseItems').value = '';
-}
-
-$('resetForm').onclick = resetForm;
-
-function refreshReview() {
-  let p = records.filter(r => r.status === 'Pending Verification');
-
-  $('pendingList').innerHTML = p.length
-    ? p.map((r, n) => `
-      <details ${n === 0 ? 'open' : ''}
-        style="border:1px solid #cfdcd2;border-radius:8px;padding:10px 12px;margin-top:10px">
-
-        <summary style="cursor:pointer;font-weight:700">
-          ${esc(r.person)}
-          <span class="muted" style="font-weight:400">
-            • ${esc(r.agency)} • ${esc(r.area)} • Time In: ${fmt(tIn(r))}
-          </span>
-          ${r.autoHold ? '<span class="status rejected">GMP item not checked</span>' : ''}
-        </summary>
-
-        <div style="margin-top:10px">
-          ${summaryHtml(r)}
-
-          <div class="grid" style="margin-top:15px">
-
-            <div class="field">
-              <label>Verified By *</label>
-              <input id="vb_${r.id}"
-                placeholder="Type name of verifier"
-                value="${esc(localStorage.getItem('gmpLastVerifier') || '')}">
-            </div>
-
-            <div class="field">
-              <label>Entry Decision *</label>
-              <select id="dec_${r.id}"
-                onchange="document.getElementById('rw_${r.id}').classList.toggle('hidden',this.value!=='Not Permitted')">
-                <option value="">Select decision</option>
-                <option>Allow Enter</option>
-                <option>Not Permitted</option>
-              </select>
-            </div>
-
-            <div class="wide hidden" id="rw_${r.id}" style="grid-column:1/-1">
-
-              <div class="field">
-                <label>Violation Type *</label>
-                <select id="vt_${r.id}">
-                  <option value="">Select violation</option>
-                  ${VIOLATIONS.map(v => `<option>${v}</option>`).join('')}
-                </select>
-              </div>
-
-              <div class="field" style="margin-top:10px">
-                <label>Remarks * (why entry is not permitted)</label>
-                <textarea id="rem_${r.id}"
-                  placeholder="State the reason entry is not permitted."></textarea>
-              </div>
-
-            </div>
-          </div>
-
-          <div class="actions">
-            <button onclick="saveDecision('${r.id}')">Save Decision</button>
-          </div>
-        </div>
-      </details>
-    `).join('')
-    : '<p class="muted"><b>No pending registrations.</b></p>';
-}
-
-const chkTable = r => `
-  <table>
-    <tr>
-      <th>Inspection Item</th>
-      <th>Result</th>
-    </tr>
-    ${(r.checks || []).map(c => `
-      <tr>
-        <td>${esc(c.label)}</td>
-        <td style="font-weight:700;color:${c.ok ? '#17633d' : '#b42318'}">
-          ${c.ok ? '✔ Checked' : '✘ Not checked'}
-        </td>
-      </tr>
-    `).join('')}
-  </table>
+/* GMP AND LOOSE ITEM CONTROL MONITORING - single-file app.js
+   Naglalaman ito ng CSS, HTML at lahat ng logic. Isang file lang ang kailangan. */
+
+// ---------- 1. STYLES ----------
+(function(){
+const css=`
+:root{--green:#176b45;--green2:#eaf5ee;--ink:#20312a;--muted:#64736b;--line:#d7e2da;--red:#b42318;--amber:#9a6700}
+*{box-sizing:border-box}body{margin:0;background:#f3f7f4;color:var(--ink);font:14px/1.45 Arial,sans-serif}
+header{background:linear-gradient(120deg,#124d35,#218052);color:white;padding:25px max(20px,calc((100% - 1200px)/2))}
+header h1{margin:0;font-size:clamp(20px,3vw,29px);letter-spacing:.3px}header p{margin:7px 0 0;opacity:.9}
+main{max-width:1200px;margin:22px auto;padding:0 16px 50px}.tabs{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px}
+button,.tab{border:0;border-radius:8px;padding:10px 14px;background:var(--green);color:white;font-weight:700;cursor:pointer}
+.tab{background:#e3eee7;color:#23563d}.tab.active{background:var(--green);color:white}
+.panel{background:white;border:1px solid var(--line);border-radius:13px;padding:20px;margin-bottom:16px;box-shadow:0 2px 9px #183b2810}
+h2{font-size:18px;margin:0 0 15px;color:#174c34}h3{font-size:15px;margin:18px 0 9px}
+.grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:13px}
+.field{display:flex;flex-direction:column;gap:5px}.field label{font-weight:700;font-size:12px;color:#40554a}
+input,select,textarea{width:100%;padding:10px;border:1px solid #cbd8cf;border-radius:7px;font:inherit;background:white;color:var(--ink)}
+textarea{min-height:68px;resize:vertical}.wide{grid-column:1/-1}
+.checkgrid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
+.check{display:flex;align-items:center;gap:8px;padding:9px;border:1px solid var(--line);border-radius:7px;background:#fbfdfb}
+.check input{width:auto}.check span{font-size:13px}
+.actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:15px}.secondary{background:#e8efe9;color:#214d36}.danger{background:#a62e27}.small{padding:7px 10px;font-size:12px}
+.note{padding:10px 12px;background:#fff8e7;border-left:3px solid #d69e22;border-radius:5px;color:#684d12;margin:12px 0}
+.muted{color:var(--muted);font-size:12px}.hidden{display:none!important}
+table{width:100%;border-collapse:collapse;font-size:12px}th,td{padding:9px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top}th{background:#edf5ef;color:#28533b}
+.status{display:inline-block;padding:3px 8px;border-radius:20px;font-weight:700;font-size:11px}.pending{background:#fff2d6;color:#805700}.verified{background:#e1f4e8;color:#17633d}.rejected{background:#fde8e7;color:#a12620}
+.signature{border:2px solid #9aada0;border-radius:4px;background:#fcfefc;touch-action:none;display:block;width:100%;max-width:640px;height:240px}.signature-tools{max-width:640px}
+.signature-tools{display:flex;justify-content:space-between;align-items:center;margin:7px 0}
+@media(max-width:760px){.grid,.checkgrid{grid-template-columns:1fr 1fr}}@media(max-width:500px){.grid,.checkgrid{grid-template-columns:1fr}}
+@media print{body{background:white}header{background:#176b45!important;-webkit-print-color-adjust:exact;print-color-adjust:exact}main{max-width:none;margin:0;padding:10px}.tabs,.no-print,.actions{display:none!important}.panel{box-shadow:none;break-inside:avoid}.print-only{display:block!important}}
+.print-only{display:none}
+label.check{cursor:pointer}.check input{width:18px;height:18px;flex:none}
+@media print{tr,img{page-break-inside:avoid}}
+@page{size:landscape;margin:10mm}
 `;
+const st=document.createElement('style');
+st.textContent=css;
+document.head.appendChild(st);
+document.title='GMP AND LOOSE ITEM CONTROL MONITORING';
+})();
 
-function summaryHtml(r) {
-  return `
-    <p>
-      <b>${esc(r.person)}</b> • ${esc(r.agency)} • ${esc(r.area)}<br>
-      <span class="muted">
-        Registered: ${new Date(r.timestamp).toLocaleString()}
-        | Time In: ${fmt(tIn(r))}
-      </span>
-    </p>
+// ---------- 2. HTML MARKUP ----------
+(function(){
+const html=`
+<header><h1>GMP AND LOOSE ITEM CONTROL MONITORING</h1><p>Personnel entry inspection • Loose item declaration • Independent verification</p></header>
+<main>
+<div class="tabs no-print">
+<button class="tab active" data-tab="register">Personnel Registration</button>
+<button class="tab" data-tab="verify">Reviewer Verification</button>
+<button class="tab" data-tab="records">Monitoring Records</button>
+<button class="tab" data-tab="weekly">Reviewed By (Weekly)</button>
+<button class="tab" data-tab="violators">GMP Violators</button>
+</div>
 
-    <h3>GMP Checklist</h3>
-    ${chkTable(r)}
+<section id="register" class="screen">
+<div id="regMsg" class="note hidden" style="font-weight:700"></div>
+<div class="panel">
+<h2>1. Incoming Personnel Registration</h2>
+<div class="grid">
+<div class="field"><label>Personnel Name *</label><input id="person" placeholder="Full name"></div>
+<div class="field"><label>Time In *</label><input type="datetime-local" id="timeIn"></div>
+<div class="field"><label>Agency *</label><select id="agency"><option value="">Select agency</option><option>Workbridge</option><option>Top Jinzi</option><option>Multi Career</option></select></div>
+<div class="field"><label>Area to Enter *</label><select id="area"><option value="">Select area</option><option>Production</option><option>Warehouse</option><option>Production and Warehouse</option></select></div>
+<div class="field"><label>Position / Purpose</label><input id="purpose" placeholder="Position or reason for entry"></div>
+<div class="field"><label>Assigned Dress Code *</label><select id="dress"><option value="">Select assigned dress code</option><option>Production Uniform</option><option>Warehouse Uniform</option><option>Visitor / Contractor PPE</option><option>Other (specify in remarks)</option></select></div>
+</div>
+<div class="muted" style="margin-top:10px">Time In is filled with the current time and can be adjusted. Time Out is logged later from Monitoring Records once the person has been allowed in.</div>
+</div>
 
-    <h3>Declared Loose Items</h3>
-    ${itemsHtml(r)}
+<div class="panel">
+<h2>2. GMP Personnel Entry Checklist</h2>
+<p class="muted">Tick every item that is satisfied. Leave an item unticked if it is not met; the reviewer will see it flagged.</p>
+<div class="checkgrid" id="gmpChecks"></div>
+<div class="actions"><button type="button" class="secondary small" id="checkAll">Tick All</button></div>
+<div class="field" style="margin-top:12px"><label>GMP Inspection Remarks / Corrective Action</label><textarea id="gmpRemarks" placeholder="Record any deficiency and action taken before entry."></textarea></div>
+</div>
 
-    <p><b>Registration remarks:</b> ${esc(r.gmpRemarks || '—')}</p>
+<div class="panel">
+<h2>3. Loose Item Declaration</h2>
+<p class="muted">Declare all loose items carried into the production or warehouse building, including approved tools, stationery, personal items, and other objects.</p>
+<div class="field"><label>Loose Items</label><textarea id="looseItems" placeholder="Type all loose items here (e.g. blue pen, cutter, thermometer). Leave blank if none."></textarea></div>
+<p class="muted">Leave blank if no loose items are being brought in.</p>
+<label class="check" style="margin-top:12px"><input type="checkbox" id="declaration"><span><b>I declare that the information and loose items listed above are complete and accurate</b></span></label>
+<div class="actions"><button id="submitRecord">Submit Registration</button><button class="secondary" id="resetForm">Clear Form</button></div>
+</div>
+</section>
 
-    ${r.autoHold
-      ? '<div class="note">One or more GMP checklist items were not ticked. Review before allowing entry.</div>'
-      : ''}
-  `;
-}
+<section id="verify" class="screen hidden">
+<div class="panel">
+<h2>Reviewer Verification</h2>
+<p class="muted">Registered personnel waiting for an entry decision are listed below. Tap a name to review it.</p>
+<div id="pendingList"></div>
+</div>
+</section>
 
-function looseText(r) {
-  return r.looseItems !== undefined
-    ? r.looseItems
-    : (r.items || []).map(i => i.description + ' x' + i.quantity).join(', ');
-}
+<section id="weekly" class="screen hidden">
+<div class="panel">
+<h2>Weekly Review</h2>
+<p class="muted">One review covers the whole week (Monday to Sunday). All registrations in the week must have an entry decision first.</p>
+<div class="grid">
+<div class="field"><label>Select any date in the week</label><input type="date" id="weekDate"></div>
+<div class="field"><label>Week Covered</label><input id="weekLabel" readonly></div>
+</div>
+<div id="weekSummary" style="margin-top:14px"></div>
+<div class="grid" style="margin-top:15px"><div class="field"><label>Reviewed By *</label><input id="weeklyName" placeholder="Type full name"></div></div>
+<h3>Signature *</h3>
+<canvas id="signature" class="signature" aria-label="Draw signature"></canvas>
+<div class="signature-tools"><span class="muted">Sign on the screen using finger, mouse, or stylus.</span><button type="button" class="secondary small" id="clearSignature">Clear Signature</button></div>
+<div class="actions"><button id="saveWeekly">Submit Weekly Review</button></div>
+</div>
+</section>
 
-function itemsHtml(r) {
-  let t = looseText(r);
+<section id="records" class="screen hidden">
+<div class="panel">
+<h2>Monitoring Records</h2>
+<div class="grid no-print">
+<div class="field"><label>Filter by Status</label><select id="filterStatus"><option>All</option><option>Pending Verification</option><option>Allow Enter</option><option>Not Permitted</option><option>Pending Weekly Review</option></select></div>
+<div class="field"><label>Search Personnel / Agency</label><input id="searchRecords" placeholder="Search records"></div>
+<div class="field"><label>&nbsp;</label><button id="refreshRecords" class="secondary">Refresh Records</button></div>
+</div>
+<div style="overflow:auto;margin-top:14px"><table><thead><tr><th>Timestamp</th><th>Personnel</th><th>Agency / Area</th><th>Loose Items</th><th>Time In / Out</th><th>Entry Decision</th><th>Weekly Reviewed By</th><th class="no-print">Action</th></tr></thead><tbody id="recordsRows"></tbody></table></div>
+<div class="actions no-print"><button id="exportCsv" class="secondary">Download CSV</button><button id="exportAllPdf">Generate Full Report (1 file)</button></div>
+<p class="muted no-print">Full Report combines all records, grouped by week with the weekly reviewer and signature, in one document. For one person, select View / PDF. In the print dialog, choose “Save as PDF”.</p>
+</div>
+</section>
 
-  return t
-    ? `<p style="white-space:pre-wrap">${esc(t)}</p>`
-    : '<p>No loose items declared.</p>';
-}
+<section id="violators" class="screen hidden">
+<div class="panel">
+<h2>GMP Violators</h2>
+<p class="muted" id="violGenerated"></p>
+<div class="grid no-print"><div class="field"><label>Filter by Violation</label><select id="filterViolation"></select></div><div class="field"><label>Search Name / Agency</label><input id="searchViolators" placeholder="Search violators"></div></div>
+<div id="violSummary" style="margin-top:12px"></div>
+<div style="overflow:auto;margin-top:10px"><table style="font-size:12px"><thead><tr><th>#</th><th>Date / Time</th><th>Name</th><th>Agency / Area</th><th>Violation</th><th>Remarks</th><th>Verified By</th></tr></thead><tbody id="violRows"></tbody></table></div>
+<div class="actions no-print"><button onclick="window.print()">Print / Save as PDF</button><button class="secondary" id="exportViol">Download CSV</button></div>
+</div>
+</section>
+<section id="report" class="hidden">
+<div class="panel" id="reportContent"></div>
+<div class="actions no-print"><button onclick="window.print()">Print / Save as PDF</button><button class="secondary" id="backRecords">Back to Records</button></div>
+</section>
+<footer class="muted" style="text-align:center;padding:10px">Local browser system • Records are stored on this device/browser only. Export and back up records regularly.</footer>
+</main>
+`;
+document.body.insertAdjacentHTML('afterbegin',html);
+})();
 
-window.saveDecision = id => {
-  let r = records.find(x => x.id === id);
-  if (!r) return;
-
-  let d = $('dec_' + id).value;
-  let rm = $('rem_' + id).value.trim();
-  let vb = $('vb_' + id).value.trim();
-
-  if (!vb) {
-    alert('Type the name of the person who verified this registration.');
-    $('vb_' + id).focus();
-    return;
-  }
-
-  if (!d) {
-    alert('Select Allow Enter or Not Permitted.');
-    return;
-  }
-
-  if (d === 'Not Permitted' && !$('vt_' + id).value) {
-    alert('Select the violation type.');
-    $('vt_' + id).focus();
-    return;
-  }
-
-  if (d === 'Not Permitted' && !rm) {
-    alert('Remarks are required when entry is Not Permitted.');
-    $('rem_' + id).focus();
-    return;
-  }
-
-  r.verifiedBy = vb;
-  localStorage.setItem('gmpLastVerifier', vb);
-
-  r.violation = d === 'Not Permitted' ? $('vt_' + id).value : '';
-  r.status = d;
-  r.remarks = d === 'Not Permitted' ? rm : '';
-  r.decidedAt = new Date().toISOString();
-
-  save();
-  alert(r.person + ': ' + d);
-  refreshReview();
-};
-
-const canvas = $('signature');
-const ctx = canvas.getContext('2d');
-
-let drawing = false;
-let hasSig = false;
-
-function clearSig() {
-  let d = window.devicePixelRatio || 1;
-
-  canvas.width = canvas.clientWidth * d;
-  canvas.height = canvas.clientHeight * d;
-
-  ctx.setTransform(d, 0, 0, d, 0, 0);
-  ctx.lineWidth = 2;
-  ctx.lineCap = 'round';
-  ctx.lineJoin = 'round';
-  ctx.strokeStyle = '#163d2b';
-
-  hasSig = false;
-}
-
-function point(e) {
-  let r = canvas.getBoundingClientRect();
-
-  return {
-    x: e.clientX - r.left,
-    y: e.clientY - r.top
-  };
-}
-
-canvas.addEventListener('pointerdown', e => {
-  drawing = true;
-  canvas.setPointerCapture(e.pointerId);
-
-  let p = point(e);
-
-  ctx.beginPath();
-  ctx.moveTo(p.x, p.y);
-  ctx.lineTo(p.x + 0.1, p.y);
-  ctx.stroke();
-
-  hasSig = true;
-});
-
-canvas.addEventListener('pointermove', e => {
-  if (!drawing) return;
-
-  let p = point(e);
-  ctx.lineTo(p.x, p.y);
-  ctx.stroke();
-});
-
-['pointerup', 'pointercancel'].forEach(ev =>
-  canvas.addEventListener(ev, () => drawing = false)
-);
-
-$('clearSignature').onclick = clearSig;
-
-function initWeekly() {
-  if (!$('weekDate').value) $('weekDate').value = ymd(new Date());
-
-  $('weeklyName').value = '';
-  clearSig();
-  loadWeek();
-}
-
-function loadWeek() {
-  let v = $('weekDate').value;
-  if (!v) return;
-
-  let k = wk(new Date(v + 'T00:00:00'));
-
-  $('weekLabel').value = wkLabel(k);
-
-  let list = records.filter(r => wk(tIn(r)) === k);
-
-  let a = list.filter(r => r.status === 'Allow Enter').length;
-  let n = list.filter(r => r.status === 'Not Permitted').length;
-  let p = list.length - a - n;
-  let w = weeks[k];
-
-  $('weekSummary').innerHTML = `
-    <p>
-      <b>${list.length}</b> record(s) •
-      Allow Enter: <b>${a}</b> •
-      Not Permitted: <b>${n}</b> •
-      Pending verification: <b>${p}</b>
-    </p>
-  ` +
-    (p
-      ? '<div class="note">Some registrations in this week still need an entry decision in Reviewer Verification.</div>'
-      : '') +
-    (w
-      ? `<div class="note">
-          Already reviewed by <b>${esc(w.name)}</b>
-          on ${new Date(w.signedAt).toLocaleString()}.
-          Submitting again replaces this review.
-        </div>`
-      : '') +
-    (list.length ? weekTable(list) : '');
-}
-
-const COLS = [
-  ['Face Mask', 'facemask'],
-  ['Head Cap', 'headcap'],
-  ['Rubber Boots', 'rubber'],
-  ['Gloves (no tear/damaged)', 'gloves'],
-  ['Apron', 'apron'],
-  ['Assigned Dress Code', 'dress code'],
-  ['Short Finger Nails', 'fingernails'],
-  ['No Cuts or Wounds', 'cuts'],
-  ['No Jewelry', 'jewelry'],
-  ['Proper Hand Washing', 'hand wash'],
-  ['No sign of Illness', 'illness'],
-  ['No frayed cuffs', 'frayed'],
-  ['No external pockets', 'pockets']
+// ---------- 3. LOGIC ----------
+const checks=[
+'Facemask properly worn','Headcap properly worn and hair contained','Rubber boots clean and appropriate',
+'Gloves used where required; no tear or damage','Apron properly worn and clean','Assigned dress code followed',
+'Fingernails short and clean','No cuts or wounds, or properly covered and controlled',
+'No jewelry or unauthorized accessories','Proper hand washing completed','No signs or symptoms of illness',
+'Uniform: no frayed cuffs','Uniform: no external pockets'
 ];
-
-const fmtS = d => new Date(d).toLocaleString([], {
-  month: 'short',
-  day: 'numeric',
-  hour: 'numeric',
-  minute: '2-digit'
-});
-
-function weekTable(list) {
-  const th = 'style="writing-mode:vertical-rl;transform:rotate(180deg);height:110px;padding:6px 2px;text-align:left;white-space:nowrap"';
-
-  const cell = (r, k) => {
-    let c = r.checks.find(x => x.label.toLowerCase().includes(k));
-
-    return c
-      ? `<td style="text-align:center;font-weight:700;color:${c.ok ? '#17633d' : '#b42318'}">${c.ok ? '✔' : '✘'}</td>`
-      : '<td style="text-align:center">—</td>';
-  };
-
-  return `
-    <div style="overflow:auto">
-      <table style="font-size:11px;min-width:1150px">
-        <thead>
-          <tr>
-            <th rowspan="2">Name</th>
-            ${COLS.slice(0, 11).map(c => `<th rowspan="2" ${th}>${c[0]}</th>`).join('')}
-            <th colspan="2" style="text-align:center">Uniform</th>
-            <th rowspan="2">Time In</th>
-            <th rowspan="2">Accounted Loose Items (QTY)</th>
-            <th rowspan="2">Time Out</th>
-            <th rowspan="2">Accounted Loose Items (QTY)</th>
-            <th rowspan="2">Remarks / Condition</th>
-            <th rowspan="2">Entry Decision</th>
-            <th rowspan="2">Verified By</th>
-          </tr>
-          <tr>
-            ${COLS.slice(11).map(c => `<th ${th}>${c[0]}</th>`).join('')}
-          </tr>
-        </thead>
-
-        <tbody>
-          ${list.map((r, n) => `
-            <tr>
-              <td>
-                <b>${n + 1}. ${esc(r.person)}</b><br>
-                <span class="muted">${esc(r.agency)} • ${esc(r.area)}</span>
-              </td>
-
-              ${COLS.map(c => cell(r, c[1])).join('')}
-
-              <td>${fmtS(tIn(r))}</td>
-              <td style="white-space:pre-wrap">${esc(looseText(r) || 'None')}</td>
-              <td>${r.timeOut ? fmtS(r.timeOut) : '—'}</td>
-              <td style="white-space:pre-wrap">
-                ${r.timeOut && r.timeOutItems !== undefined
-                  ? esc(r.timeOutItems || 'None')
-                  : '—'}
-              </td>
-              <td>
-                ${esc([r.violation, r.gmpRemarks, r.remarks].filter(Boolean).join(' | ') || '—')}
-              </td>
-              <td><b>${esc(r.status)}</b></td>
-              <td>${esc(r.verifiedBy || '—')}</td>
-            </tr>
-          `).join('')}
-        </tbody>
-      </table>
-    </div>
-  `;
-}
-
-$('weekDate').onchange = loadWeek;
-
-$('saveWeekly').onclick = () => {
-  let v = $('weekDate').value;
-
-  if (!v) {
-    alert('Select a date in the week.');
-    return;
-  }
-
-  let k = wk(new Date(v + 'T00:00:00'));
-  let list = records.filter(r => wk(tIn(r)) === k);
-  let name = $('weeklyName').value.trim();
-
-  if (!list.length) {
-    alert('No registrations in this week.');
-    return;
-  }
-
-  if (list.some(r => r.status === 'Pending Verification')) {
-    alert('Complete the entry decision for all registrations in this week first.');
-    return;
-  }
-
-  if (!name) {
-    alert('Type the reviewer name.');
-    $('weeklyName').focus();
-    return;
-  }
-
-  if (!hasSig) {
-    alert('Please sign in the signature box.');
-    return;
-  }
-
-  weeks[k] = {
-    name,
-    signedAt: new Date().toISOString(),
-    signature: canvas.toDataURL()
-  };
-
-  save();
-
-  alert('Weekly review saved and recorded.');
-  showTab('records');
+const VIOLATIONS=['A1 - Uniform','A2 - Face Mask','A3 - Hand Washing','A4 - Dirty Boots','A5 - Excessive perfume','A6 - Cell Phone','A7 - Bringing foods','A8 - Others (Not mentioned)','B - Behavior','C - Cleaning and Sanitation','D - Cross Contamination','E - Make-up / cosmetics'];
+const DECL='I declare that the information and loose items listed above are complete and accurate';
+const $=id=>document.getElementById(id);
+const fmt=d=>new Date(d).toLocaleString(),tIn=r=>r.timeIn||r.timestamp;
+function nowLocal(){let d=new Date();return ymd(d)+'T'+String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0')}
+let records=JSON.parse(localStorage.getItem('gmpLooseItemRecords')||'[]'),weeks=JSON.parse(localStorage.getItem('gmpWeeklyReviews')||'{}'),currentReport=null;
+records.forEach(r=>{if(r.status==='Verified - Entry Authorized')r.status='Allow Enter';else if(r.status==='Rejected - Entry Not Authorized')r.status='Not Permitted';else if(r.status==='Returned for Correction')r.status='Pending Verification';if(!r.agency)r.agency=r.dept||'—';r.checks.forEach(c=>{if(c.ok===undefined)c.ok=c.checked&&c.result!=='Fail'})});
+$('gmpChecks').innerHTML=checks.map((c,i)=>`<label class="check"><input type="checkbox" id="g${i}"><span>${c}</span></label>`).join('');
+$('checkAll').onclick=()=>checks.forEach((_,i)=>$('g'+i).checked=true);
+function save(){localStorage.setItem('gmpLooseItemRecords',JSON.stringify(records));localStorage.setItem('gmpWeeklyReviews',JSON.stringify(weeks))}
+function esc(s){return String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
+const ymd=d=>d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
+function wk(d){d=new Date(d);d=new Date(d.getFullYear(),d.getMonth(),d.getDate());d.setDate(d.getDate()-(d.getDay()+6)%7);return ymd(d)}
+function wkLabel(k){let s=new Date(k+'T00:00:00'),e=new Date(s);e.setDate(e.getDate()+6);let f=x=>x.toLocaleDateString(undefined,{month:'short',day:'numeric',year:'numeric'});return f(s)+' – '+f(e)}
+const wr=r=>weeks[wk(r.timestamp)];
+function showTab(tab){document.querySelectorAll('.screen').forEach(x=>x.classList.add('hidden'));$('report').classList.add('hidden');$(tab).classList.remove('hidden');document.querySelectorAll('.tab').forEach(b=>b.classList.toggle('active',b.dataset.tab===tab));if(tab==='verify')refreshReview();if(tab==='weekly')initWeekly();if(tab==='records')renderRecords();if(tab==='violators')renderViolators()}
+document.querySelectorAll('.tab').forEach(b=>b.onclick=()=>showTab(b.dataset.tab));
+$('submitRecord').onclick=()=>{
+for(let id of['person','timeIn','agency','area','dress']){if(!$(id).value.trim()){alert('Please complete all required fields.');$(id).focus();return}}
+if(!$('declaration').checked){alert('Tick the declaration before submitting.');return}
+let gmp=checks.map((label,i)=>({label,ok:$('g'+i).checked})),miss=gmp.filter(x=>!x.ok).length;
+if(miss&&!confirm(miss+' GMP checklist item(s) are not ticked. Submit anyway?'))return;
+let rec={id:Date.now().toString(),timestamp:new Date().toISOString(),person:$('person').value.trim(),timeIn:new Date($('timeIn').value).toISOString(),timeOut:'',agency:$('agency').value,area:$('area').value,purpose:$('purpose').value,dress:$('dress').value,checks:gmp,gmpRemarks:$('gmpRemarks').value,looseItems:$('looseItems').value.trim(),declaration:DECL,status:'Pending Verification',remarks:'',autoHold:miss>0};
+records.unshift(rec);save();resetForm();window.scrollTo({top:0,behavior:'smooth'});let m=$('regMsg');m.textContent='Registration submitted for '+rec.person+'. It is now waiting for the reviewer.';m.classList.remove('hidden');clearTimeout(window.regT);window.regT=setTimeout(()=>m.classList.add('hidden'),8000);
 };
-
-function renderRecords() {
-  let q = $('searchRecords').value.toLowerCase();
-  let f = $('filterStatus').value;
-
-  let list = records.filter(r =>
-    (f === 'All' ||
-      r.status === f ||
-      (f === 'Pending Weekly Review' &&
-        r.status !== 'Pending Verification' && !wr(r))) &&
-    `${r.person} ${r.agency} ${r.area}`.toLowerCase().includes(q)
-  );
-
-  $('recordsRows').innerHTML = list.length
-    ? list.map(r => {
-      let w = wr(r);
-
-      return `
-        <tr>
-          <td>${new Date(r.timestamp).toLocaleString()}</td>
-          <td>${esc(r.person)}</td>
-          <td>${esc(r.agency)}<br>${esc(r.area)}</td>
-          <td><span style="white-space:pre-wrap">${esc(looseText(r) || 'None')}</span></td>
-
-          <td>
-            In: ${fmt(tIn(r))}<br>
-            Out:
-            ${r.timeOut
-              ? fmt(r.timeOut)
-              : r.status === 'Allow Enter'
-                ? `<button class="small no-print" onclick="logOut('${r.id}')">Log Time Out</button>`
-                : '—'}
-          </td>
-
-          <td>
-            <span class="status ${r.status === 'Allow Enter' ? 'verified' : r.status === 'Not Permitted' ? 'rejected' : 'pending'}">
-              ${esc(r.status)}
-            </span>
-
-            ${r.violation ? `<br><span class="muted"><b>${esc(r.violation)}</b></span>` : ''}
-            ${r.remarks ? `<br><span class="muted">${esc(r.remarks)}</span>` : ''}
-            ${r.verifiedBy ? `<br><span class="muted">Verified by: ${esc(r.verifiedBy)}</span>` : ''}
-          </td>
-
-          <td>
-            ${w
-              ? esc(w.name) + '<br><span class="muted">' + wkLabel(wk(tIn(r))) + '</span>'
-              : r.status === 'Pending Verification'
-                ? '—'
-                : '<span class="status pending">Pending review</span>'}
-          </td>
-
-          <td class="no-print">
-            <button class="small" onclick="viewReport('${r.id}')">View / PDF</button>
-          </td>
-        </tr>
-      `;
-    }).join('')
-    : '<tr><td colspan="8" class="muted">No records found.</td></tr>';
-}
-
-$('refreshRecords').onclick = renderRecords;
-$('filterStatus').onchange = renderRecords;
-$('searchRecords').oninput = renderRecords;
-
-window.logOut = id => {
-  let r = records.find(x => x.id === id);
-  if (!r) return;
-
-  let t = prompt(
-    'Accounted loose items at Time Out (edit if different, or leave as is):',
-    looseText(r)
-  );
-
-  if (t === null) return;
-
-  r.timeOutItems = t.trim();
-  r.timeOut = new Date().toISOString();
-
-  save();
-  renderRecords();
-};
-
-window.viewReport = id => {
-  currentReport = records.find(r => r.id === id);
-  if (!currentReport) return;
-
-  $('records').classList.add('hidden');
-  $('report').classList.remove('hidden');
-
-  $('reportContent').innerHTML = reportHtml(currentReport);
-};
-
-function reportHtml(r) {
-  let w = wr(r);
-
-  return `
-    <div style="text-align:center;border-bottom:2px solid #176b45;padding-bottom:12px">
-      <h2>GMP AND LOOSE ITEM CONTROL MONITORING</h2>
-      <b>PERSONNEL ENTRY & LOOSE ITEM DECLARATION RECORD</b>
-    </div>
-
-    <p>
-      <b>Registration Timestamp:</b> ${new Date(r.timestamp).toLocaleString()}<br>
-      <b>Time In:</b> ${fmt(tIn(r))}<br>
-      <b>Time Out:</b> ${r.timeOut ? fmt(r.timeOut) : '—'}<br>
-      <b>Loose Items at Time Out:</b>
-      ${esc(r.timeOut && r.timeOutItems !== undefined ? r.timeOutItems || 'None' : '—')}<br>
-      <b>Personnel:</b> ${esc(r.person)}<br>
-      <b>Agency:</b> ${esc(r.agency)}<br>
-      <b>Area:</b> ${esc(r.area)}<br>
-      <b>Position / Purpose:</b> ${esc(r.purpose || '—')}<br>
-      <b>Assigned Dress Code:</b> ${esc(r.dress)}
-    </p>
-
-    <h3>GMP Personnel Entry Checklist</h3>
-    ${chkTable(r)}
-
-    <h3>Loose Item Declaration</h3>
-    ${itemsHtml(r)}
-
-    <p><b>GMP Remarks / Corrective Action:</b> ${esc(r.gmpRemarks || '—')}</p>
-    <p><b>Personnel Declaration:</b> ${esc(r.declaration)}</p>
-
-    <h3>Reviewer Verification</h3>
-
-    <p>
-      <b>Verified By:</b> ${esc(r.verifiedBy || '—')}<br>
-      <b>Entry Decision:</b> ${esc(r.status)}
-      ${r.status === 'Not Permitted'
-        ? '<br><b>Violation:</b> ' + esc(r.violation || '—') +
-          '<br><b>Remarks:</b> ' + esc(r.remarks)
-        : ''}
-    </p>
-
-    <h3>Weekly Review</h3>
-
-    <p>
-      <b>Week Covered:</b> ${wkLabel(wk(tIn(r)))}<br>
-      <b>Reviewed By:</b> ${esc(w?.name || 'Pending review')}<br>
-      <b>Review Date / Time:</b> ${w ? new Date(w.signedAt).toLocaleString() : '—'}
-    </p>
-
-    <div style="margin-top:15px">
-      <b>Signature:</b><br>
-      ${w?.signature
-        ? `<img src="${w.signature}" style="width:300px;height:112px;object-fit:contain;border-bottom:1px solid #333">`
-        : '<div style="height:75px;border-bottom:1px solid #333;width:280px"></div>'}
-
-      <p class="muted">Electronic signature captured on screen during weekly review</p>
-    </div>
-
-    <p style="margin-top:22px;font-size:11px;color:#555">
-      Controlled record. Entry authorization is subject to site GMP requirements and applicable procedures.
-    </p>
-  `;
-}
-
-$('backRecords').onclick = () => showTab('records');
-
-function fullReportHtml() {
-  let keys = [...new Set(records.map(r => wk(tIn(r))))].sort().reverse();
-
-  return `
-    <div style="text-align:center;border-bottom:2px solid #176b45;padding-bottom:12px">
-      <h2>GMP AND LOOSE ITEM CONTROL MONITORING</h2>
-      <b>CONSOLIDATED MONITORING REPORT</b><br>
-      <span class="muted">Generated: ${fmt(new Date())} • ${records.length} record(s)</span>
-    </div>
-  ` +
-    (keys.length
-      ? keys.map(k => {
-        let list = records.filter(r => wk(tIn(r)) === k).reverse();
-        let w = weeks[k];
-
-        let a = list.filter(r => r.status === 'Allow Enter').length;
-        let n = list.filter(r => r.status === 'Not Permitted').length;
-
-        return `
-          <div style="margin-top:20px">
-            <h3>Week: ${wkLabel(k)}</h3>
-
-            <p class="muted">
-              ${list.length} record(s) •
-              Allow Enter: ${a} •
-              Not Permitted: ${n} •
-              Pending verification: ${list.length - a - n}
-            </p>
-
-            ${weekTable(list)}
-
-            <p>
-              <b>Reviewed By:</b> ${esc(w?.name || 'Pending review')}
-              ${w ? ' • ' + fmt(w.signedAt) : ''}
-            </p>
-
-            ${w?.signature
-              ? `<img src="${w.signature}" style="width:260px;height:97px;object-fit:contain;border-bottom:1px solid #333">`
-              : ''}
-          </div>
-        `;
-      }).join('')
-      : '<p>No records.</p>');
-}
-
-$('exportAllPdf').onclick = () => {
-  $('records').classList.add('hidden');
-  $('report').classList.remove('hidden');
-
-  $('reportContent').innerHTML = fullReportHtml();
-  window.scrollTo(0, 0);
-};
-
-$('exportCsv').onclick = () => {
-  let rows = [[
-    'Timestamp',
-    'Personnel',
-    'Agency',
-    'Area',
-    'Time In',
-    'Time Out',
-    'Loose Items at Time Out',
-    'GMP Checklist',
-    'Loose Items',
-    'Entry Decision',
-    'Violation',
-    'Remarks',
-    'Verified By',
-    'Week Covered',
-    'Weekly Reviewed By',
-    'Review Timestamp'
-  ]];
-
-  records.forEach(r => {
-    let w = wr(r);
-
-    rows.push([
-      new Date(r.timestamp).toLocaleString(),
-      r.person,
-      r.agency,
-      r.area,
-      fmt(tIn(r)),
-      r.timeOut ? fmt(r.timeOut) : '',
-      r.timeOutItems || '',
-      (r.checks || []).map(c =>
-        c.label + ': ' + (c.ok ? 'Checked' : 'Not checked')
-      ).join('; '),
-      looseText(r),
-      r.status,
-      r.violation || '',
-      r.remarks || '',
-      r.verifiedBy || '',
-      wkLabel(wk(tIn(r))),
-      w?.name || '',
-      w ? new Date(w.signedAt).toLocaleString() : ''
-    ]);
-  });
-
-  let csv = rows.map(row =>
-    row.map(v => '"' + String(v ?? '').replace(/"/g, '""') + '"').join(',')
-  ).join('\r\n');
-
-  let a = document.createElement('a');
-
-  a.href = URL.createObjectURL(
-    new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8' })
-  );
-
-  a.download = 'GMP_Loose_Item_Monitoring.csv';
-  a.click();
-
-  URL.revokeObjectURL(a.href);
-};
-
-$('filterViolation').innerHTML =
-  '<option value="">All violations</option>' +
-  VIOLATIONS.map(v => `<option>${v}</option>`).join('');
-
-function violList() {
-  let q = $('searchViolators').value.toLowerCase();
-  let f = $('filterViolation').value;
-
-  return records.filter(r =>
-    r.status === 'Not Permitted' &&
-    (!f || r.violation === f) &&
-    `${r.person} ${r.agency} ${r.area}`.toLowerCase().includes(q)
-  );
-}
-
-function renderViolators() {
-  let l = violList();
-
-  let c = VIOLATIONS.map(v => [
-    v,
-    l.filter(r => r.violation === v).length
-  ]).filter(x => x[1]);
-
-  $('violGenerated').textContent = 'Generated: ' + fmt(new Date());
-
-  $('violSummary').innerHTML =
-    `<p><b>Total violators: ${l.length}</b></p>` +
-    (c.length
-      ? '<p class="muted">' +
-        c.map(x => esc(x[0]) + ': ' + x[1]).join(' • ') +
-        '</p>'
-      : '');
-
-  $('violRows').innerHTML = l.length
-    ? l.map((r, n) => `
-      <tr>
-        <td>${n + 1}</td>
-        <td>${fmt(r.timestamp)}</td>
-        <td><b>${esc(r.person)}</b></td>
-        <td>${esc(r.agency)}<br>${esc(r.area)}</td>
-        <td>${esc(r.violation || 'Not specified')}</td>
-        <td>${esc(r.remarks || '—')}</td>
-        <td>${esc(r.verifiedBy || '—')}</td>
-      </tr>
-    `).join('')
-    : '<tr><td colspan="7" class="muted">No GMP violators recorded.</td></tr>';
-}
-
-$('filterViolation').onchange = renderViolators;
-$('searchViolators').oninput = renderViolators;
-
-$('exportViol').onclick = () => {
-  let rows = [[
-    'Date / Time',
-    'Name',
-    'Agency',
-    'Area',
-    'Violation',
-    'Remarks',
-    'Verified By'
-  ]];
-
-  violList().forEach(r => {
-    rows.push([
-      fmt(r.timestamp),
-      r.person,
-      r.agency,
-      r.area,
-      r.violation || '',
-      r.remarks || '',
-      r.verifiedBy || ''
-    ]);
-  });
-
-  let csv = rows.map(row =>
-    row.map(v => '"' + String(v ?? '').replace(/"/g, '""') + '"').join(',')
-  ).join('\r\n');
-
-  let a = document.createElement('a');
-
-  a.href = URL.createObjectURL(
-    new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8' })
-  );
-
-  a.download = 'GMP_Violators.csv';
-  a.click();
-
-  URL.revokeObjectURL(a.href);
-};
-
-save();
-
-$('timeIn').value = nowLocal();
-
-renderRecords();
- 
+function resetForm(){$('timeIn').value=nowLocal();['person','purpose','gmpRemarks'].forEach(id=>$(id).value='');['agency','area','dress'].forEach(id=>$(id).selectedIndex=0);$('declaration').checked=false;checks.forEach((_,i)=>$('g'+i).checked=false);$('looseItems').value=''}
+$('resetForm').onclick=resetForm;
+function refreshReview(){let p=records.filter(r=>r.status==='Pending Verification');
+$('pendingList').innerHTML=p.length?p.map((r,n)=>`<details ${n===0?'open':''} style="border:1px solid #cfdcd2;border-radius:8px;padding:10px 12px;margin-top:10px"><summary style="cursor:pointer;font-weight:700">${esc(r.person)} <span class="muted" style="font-weight:400">• ${esc(r.agency)} • ${esc(r.area)} • Time In: ${fmt(tIn(r))}</span>${r.autoHold?' <span class="status rejected">GMP item not checked</span>':''}</summary><div style="margin-top:10px">${summaryHtml(r)}<div class="grid" style="margin-top:15px"><div class="field"><label>Verified By *</label><input id="vb_${r.id}" placeholder="Type name of verifier" value="${esc(localStorage.getItem('gmpLastVerifier')||'')}"></div><div class="field"><label>Entry Decision *</label><select id="dec_${r.id}" onchange="document.getElementById('rw_${r.id}').classList.toggle('hidden',this.value!=='Not Permitted')"><option value="">Select decision</option><option>Allow Enter</option><option>Not Permitted</option></select></div><div class="wide hidden" id="rw_${r.id}" style="grid-column:1/-1"><div class="field"><label>Violation Type *</label><select id="vt_${r.id}"><option value="">Select violation</option>${VIOLATIONS.map(v=>`<option>${v}</option>`).join('')}</select></div><div class="field" style="margin-top:10px"><label>Remarks * (why entry is not permitted)</label><textarea id="rem_${r.id}" placeholder="State the reason entry is not permitted."></textarea></div></div></div><div class="actions"><button onclick="saveDecision('${r.id}')">Save Decision</button></div></div></details>`).join(''):'<p class="muted"><b>No pending registrations.</b></p>'}
+const chkTable=r=>`<table><tr><th>Inspection Item</th><th>Result</th></tr>${r.checks.map(c=>`<tr><td>${esc(c.label)}</td><td style="font-weight:700;color:${c.ok?'#17633d':'#b42318'}">${c.ok?'✔ Checked':'✘ Not checked'}</td></tr>`).join('')}</table>`;
+function summaryHtml(r){return `<p><b>${esc(r.person)}</b> • ${esc(r.agency)} • ${esc(r.area)}<br><span class="muted">Registered: ${new Date(r.timestamp).toLocaleString()} | Time In: ${fmt(tIn(r))}</span></p><h3>GMP Checklist</h3>${chkTable(r)}<h3>Declared Loose Items</h3>${itemsHtml(r)}<p><b>Registration remarks:</b> ${esc(r.gmpRemarks||'—')}</p>${r.autoHold?'<div class="note">One or more GMP checklist items were not ticked. Review before allowing entry.</div>':''}`}
+function looseText(r){return r.looseItems!==undefined?r.looseItems:(r.items||[]).map(i=>i.description+' x'+i.quantity).join(', ')}
+function itemsHtml(r){let t=looseText(r);return t?`<p style="white-space:pre-wrap">${esc(t)}</p>`:'<p>No loose items declared.</p>'}
+window.saveDecision=id=>{let r=records.find(x=>x.id===id);if(!r)return;let d=$('dec_'+id).value,rm=$('rem_'+id).value.trim(),vb=$('vb_'+id).value.trim();
+if(!vb){alert('Type the name of the person who verified this registration.');$('vb_'+id).focus();return}
+if(!d){alert('Select Allow Enter or Not Permitted.');return}
+if(d==='Not Permitted'&&!$('vt_'+id).value){alert('Select the violation type.');$('vt_'+id).focus();return}
+if(d==='Not Permitted'&&!rm){alert('Remarks are required when entry is Not Permitted.');$('rem_'+id).focus();return}
+r.verifiedBy=vb;localStorage.setItem('gmpLastVerifier',vb);r.violation=d==='Not Permitted'?$('vt_'+id).value:'';r.status=d;r.remarks=d==='Not Permitted'?rm:'';r.decidedAt=new Date().toISOString();save();alert(r.person+': '+d);refreshReview()};
+const canvas=$('signature'),ctx=canvas.getContext('2d');let drawing=false,hasSig=false;
+function clearSig(){let d=window.devicePixelRatio||1;canvas.width=canvas.clientWidth*d;canvas.height=canvas.clientHeight*d;ctx.setTransform(d,0,0,d,0,0);ctx.lineWidth=2;ctx.lineCap='round';ctx.lineJoin='round';ctx.strokeStyle='#163d2b';hasSig=false}
+function point(e){let r=canvas.getBoundingClientRect();return{x:e.clientX-r.left,y:e.clientY-r.top}}
+canvas.addEventListener('pointerdown',e=>{drawing=true;canvas.setPointerCapture(e.pointerId);let p=point(e);ctx.beginPath();ctx.moveTo(p.x,p.y);ctx.lineTo(p.x+.1,p.y);ctx.stroke();hasSig=true});
+canvas.addEventListener('pointermove',e=>{if(!drawing)return;let p=point(e);ctx.lineTo(p.x,p.y);ctx.stroke()});
+['pointerup','pointercancel'].forEach(ev=>canvas.addEventListener(ev,()=>{drawing=false}));
+$('clearSignature').onclick=clearSig;
+function initWeekly(){if(!$('weekDate').value)$('weekDate').value=ymd(new Date());$('weeklyName').value='';clearSig();loadWeek()}
+function loadWeek(){let v=$('weekDate').value;if(!v)return;let k=wk(new Date(v+'T00:00:00'));$('weekLabel').value=wkLabel(k);
+let list=records.filter(r=>wk(r.timestamp)===k),a=list.filter(r=>r.status==='Allow Enter').length,n=list.filter(r=>r.status==='Not Permitted').length,p=list.length-a-n,w=weeks[k];
+$('weekSummary').innerHTML=`<p><b>${list.length}</b> record(s) • Allow Enter: <b>${a}</b> • Not Permitted: <b>${n}</b> • Pending verification: <b>${p}</b></p>`+(p?'<div class="note">Some registrations in this week still need an entry decision in Reviewer Verification.</div>':'')+(w?`<div class="note">Already reviewed by <b>${esc(w.name)}</b> on ${new Date(w.signedAt).toLocaleString()}. Submitting again replaces this review.</div>`:'')+(list.length?weekTable(list):'')}
+const COLS=[['Face Mask','facemask'],['Head Cap','headcap'],['Rubber Boots','rubber'],['Gloves (no tear/damaged)','gloves'],['Apron','apron'],['Assigned Dress Code','dress code'],['Short Finger Nails','fingernails'],['No Cuts or Wounds','cuts'],['No Jewelry','jewelry'],['Proper Hand Washing','hand wash'],['No sign of Illness','illness'],['No frayed cuffs','frayed'],['No external pockets','pockets']];
+const fmtS=d=>new Date(d).toLocaleString([],{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'});
+function weekTable(list){
+const th='style="writing-mode:vertical-rl;transform:rotate(180deg);height:110px;padding:6px 2px;text-align:left;white-space:nowrap"';
+const cell=(r,k)=>{let c=r.checks.find(x=>x.label.toLowerCase().includes(k));return c?`<td style="text-align:center;font-weight:700;color:${c.ok?'#17633d':'#b42318'}">${c.ok?'✔':'✘'}</td>`:'<td style="text-align:center">—</td>'};
+return `<div style="overflow:auto"><table style="font-size:11px;min-width:1150px"><thead><tr><th rowspan="2">Name</th>${COLS.slice(0,11).map(c=>`<th rowspan="2" ${th}>${c[0]}</th>`).join('')}<th colspan="2" style="text-align:center">Uniform</th><th rowspan="2">Time In</th><th rowspan="2">Accounted Loose Items (QTY)</th><th rowspan="2">Time Out</th><th rowspan="2">Accounted Loose Items (QTY)</th><th rowspan="2">Remarks / Condition</th><th rowspan="2">Entry Decision</th><th rowspan="2">Verified By</th></tr><tr>${COLS.slice(11).map(c=>`<th ${th}>${c[0]}</th>`).join('')}</tr></thead><tbody>${list.map((r,n)=>`<tr><td><b>${n+1}. ${esc(r.person)}</b><br><span class="muted">${esc(r.agency)} • ${esc(r.area)}</span></td>${COLS.map(c=>cell(r,c[1])).join('')}<td>${fmtS(tIn(r))}</td><td style="white-space:pre-wrap">${esc(looseText(r)||'None')}</td><td>${r.timeOut?fmtS(r.timeOut):'—'}</td><td style="white-space:pre-wrap">${r.timeOut&&r.timeOutItems!==undefined?esc(r.timeOutItems||'None'):'—'}</td><td>${esc([r.violation,r.gmpRemarks,r.remarks].filter(Boolean).join(' | ')||'—')}</td><td><b>${esc(r.status)}</b></td><td>${esc(r.verifiedBy||'—')}</td></tr>`).join('')}</tbody></table></div>`}
+$('weekDate').onchange=loadWeek;
+$('saveWeekly').onclick=()=>{let v=$('weekDate').value;if(!v){alert('Select a date in the week.');return}let k=wk(new Date(v+'T00:00:00')),list=records.filter(r=>wk(r.timestamp)===k),name=$('weeklyName').value.trim();
+if(!list.length){alert('No registrations in this week.');return}
+if(list.some(r=>r.status==='Pending Verification')){alert('Complete the entry decision for all registrations in this week first.');return}
+if(!name){alert('Type the reviewer name.');$('weeklyName').focus();return}
+if(!hasSig){alert('Please sign in the signature box.');return}
+weeks[k]={name,signedAt:new Date().toISOString(),signature:canvas.toDataURL()};save();alert('Weekly review saved and recorded.');showTab('records')};
+function renderRecords(){let q=$('searchRecords').value.toLowerCase(),f=$('filterStatus').value;
+let list=records.filter(r=>(f==='All'||r.status===f||(f==='Pending Weekly Review'&&r.status!=='Pending Verification'&&!wr(r)))&&`${r.person} ${r.agency} ${r.area}`.toLowerCase().includes(q));
+$('recordsRows').innerHTML=list.length?list.map(r=>{let w=wr(r);return `<tr><td>${new Date(r.timestamp).toLocaleString()}</td><td>${esc(r.person)}</td><td>${esc(r.agency)}<br>${esc(r.area)}</td><td><span style="white-space:pre-wrap">${esc(looseText(r)||'None')}</span></td><td>In: ${fmt(tIn(r))}<br>Out: ${r.timeOut?fmt(r.timeOut):r.status==='Allow Enter'?`<button class="small no-print" onclick="logOut('${r.id}')">Log Time Out</button>`:'—'}</td><td><span class="status ${r.status==='Allow Enter'?'verified':r.status==='Not Permitted'?'rejected':'pending'}">${esc(r.status)}</span>${r.violation?`<br><span class="muted"><b>${esc(r.violation)}</b></span>`:''}${r.remarks?`<br><span class="muted">${esc(r.remarks)}</span>`:''}${r.verifiedBy?`<br><span class="muted">Verified by: ${esc(r.verifiedBy)}</span>`:''}</td><td>${w?esc(w.name)+'<br><span class="muted">'+wkLabel(wk(r.timestamp))+'</span>':r.status==='Pending Verification'?'—':'<span class="status pending">Pending review</span>'}</td><td class="no-print"><button class="small" onclick="viewReport('${r.id}')">View / PDF</button></td></tr>`}).join(''):'<tr><td colspan="8" class="muted">No records found.</td></tr>'}
+$('refreshRecords').onclick=renderRecords;$('filterStatus').onchange=renderRecords;$('searchRecords').oninput=renderRecords;
+window.logOut=id=>{let r=records.find(x=>x.id===id);if(!r)return;let t=prompt('Accounted loose items at Time Out (edit if different, or leave as is):',looseText(r));if(t===null)return;r.timeOutItems=t.trim();r.timeOut=new Date().toISOString();save();renderRecords()};
+window.viewReport=id=>{currentReport=records.find(r=>r.id===id);if(!currentReport)return;$('records').classList.add('hidden');$('report').classList.remove('hidden');$('reportContent').innerHTML=reportHtml(currentReport)};
+function reportHtml(r){let w=wr(r);return `<div style="text-align:center;border-bottom:2px solid #176b45;padding-bottom:12px"><h2>GMP AND LOOSE ITEM CONTROL MONITORING</h2><b>PERSONNEL ENTRY & LOOSE ITEM DECLARATION RECORD</b></div><p><b>Registration Timestamp:</b> ${new Date(r.timestamp).toLocaleString()}<br><b>Time In:</b> ${fmt(tIn(r))}<br><b>Time Out:</b> ${r.timeOut?fmt(r.timeOut):'—'}<br><b>Loose Items at Time Out:</b> ${esc(r.timeOut&&r.timeOutItems!==undefined?r.timeOutItems||'None':'—')}<br><b>Personnel:</b> ${esc(r.person)}<br><b>Agency:</b> ${esc(r.agency)}<br><b>Area:</b> ${esc(r.area)}<br><b>Position / Purpose:</b> ${esc(r.purpose||'—')}<br><b>Assigned Dress Code:</b> ${esc(r.dress)}</p><h3>GMP Personnel Entry Checklist</h3>${chkTable(r)}<h3>Loose Item Declaration</h3>${itemsHtml(r)}<p><b>GMP Remarks / Corrective Action:</b> ${esc(r.gmpRemarks||'—')}</p><p><b>Personnel Declaration:</b> ${esc(r.declaration)}</p><h3>Reviewer Verification</h3><p><b>Verified By:</b> ${esc(r.verifiedBy||'—')}<br><b>Entry Decision:</b> ${esc(r.status)}${r.status==='Not Permitted'?'<br><b>Violation:</b> '+esc(r.violation||'—')+'<br><b>Remarks:</b> '+esc(r.remarks):''}</p><h3>Weekly Review</h3><p><b>Week Covered:</b> ${wkLabel(wk(r.timestamp))}<br><b>Reviewed By:</b> ${esc(w?.name||'Pending review')}<br><b>Review Date / Time:</b> ${w?new Date(w.signedAt).toLocaleString():'—'}</p><div style="margin-top:15px"><b>Signature:</b><br>${w?.signature?`<img src="${w.signature}" style="width:300px;height:112px;object-fit:contain;border-bottom:1px solid #333">`:'<div style="height:75px;border-bottom:1px solid #333;width:280px"></div>'}<p class="muted">Electronic signature captured on screen during weekly review</p></div><p style="margin-top:22px;font-size:11px;color:#555">Controlled record. Entry authorization is subject to site GMP requirements and applicable procedures.</p>`}
+$('backRecords').onclick=()=>showTab('records');
+function fullReportHtml(){let keys=[...new Set(records.map(r=>wk(r.timestamp)))].sort().reverse();
+return `<div style="text-align:center;border-bottom:2px solid #176b45;padding-bottom:12px"><h2>GMP AND LOOSE ITEM CONTROL MONITORING</h2><b>CONSOLIDATED MONITORING REPORT</b><br><span class="muted">Generated: ${fmt(new Date())} • ${records.length} record(s)</span></div>`+(keys.length?keys.map(k=>{let list=records.filter(r=>wk(r.timestamp)===k).reverse(),w=weeks[k],a=list.filter(r=>r.status==='Allow Enter').length,n=list.filter(r=>r.status==='Not Permitted').length;return `<div style="margin-top:20px"><h3>Week: ${wkLabel(k)}</h3><p class="muted">${list.length} record(s) • Allow Enter: ${a} • Not Permitted: ${n} • Pending verification: ${list.length-a-n}</p>${weekTable(list)}<p><b>Reviewed By:</b> ${esc(w?.name||'Pending review')}${w?' • '+fmt(w.signedAt):''}</p>${w?.signature?`<img src="${w.signature}" style="width:260px;height:97px;object-fit:contain;border-bottom:1px solid #333">`:''}</div>`}).join(''):'<p>No records.</p>')}
+$('exportAllPdf').onclick=()=>{$('records').classList.add('hidden');$('report').classList.remove('hidden');$('reportContent').innerHTML=fullReportHtml();window.scrollTo(0,0)};
+$('exportCsv').onclick=()=>{let rows=[['Timestamp','Personnel','Agency','Area','Time In','Time Out','Loose Items at Time Out','GMP Checklist','Loose Items','Entry Decision','Violation','Remarks','Verified By','Week Covered','Weekly Reviewed By','Review Timestamp']];records.forEach(r=>{let w=wr(r);rows.push([new Date(r.timestamp).toLocaleString(),r.person,r.agency,r.area,fmt(tIn(r)),r.timeOut?fmt(r.timeOut):'',r.timeOutItems||'',r.checks.map(c=>c.label+': '+(c.ok?'Checked':'Not checked')).join('; '),looseText(r),r.status,r.violation||'',r.remarks||'',r.verifiedBy||'',wkLabel(wk(r.timestamp)),w?.name||'',w?new Date(w.signedAt).toLocaleString():''])});let csv=rows.map(row=>row.map(v=>'"'+String(v??'').replace(/"/g,'""')+'"').join(',')).join('\r\n');let a=document.createElement('a');a.href=URL.createObjectURL(new Blob([csv],{type:'text/csv'}));a.download='GMP_Loose_Item_Monitoring.csv';a.click();URL.revokeObjectURL(a.href)};
+$('filterViolation').innerHTML='<option value="">All violations</option>'+VIOLATIONS.map(v=>`<option>${v}</option>`).join('');
+function violList(){let q=$('searchViolators').value.toLowerCase(),f=$('filterViolation').value;return records.filter(r=>r.status==='Not Permitted'&&(!f||r.violation===f)&&`${r.person} ${r.agency} ${r.area}`.toLowerCase().includes(q))}
+function renderViolators(){let l=violList(),c=VIOLATIONS.map(v=>[v,l.filter(r=>r.violation===v).length]).filter(x=>x[1]);
+$('violGenerated').textContent='Generated: '+fmt(new Date());
+$('violSummary').innerHTML=`<p><b>Total violators: ${l.length}</b></p>`+(c.length?'<p class="muted">'+c.map(x=>esc(x[0])+': '+x[1]).join(' • ')+'</p>':'');
+$('violRows').innerHTML=l.length?l.map((r,n)=>{return `<tr><td>${n+1}</td><td>${fmt(r.timestamp)}</td><td><b>${esc(r.person)}</b></td><td>${esc(r.agency)}<br>${esc(r.area)}</td><td>${esc(r.violation||'Not specified')}</td><td>${esc(r.remarks||'—')}</td><td>${esc(r.verifiedBy||'—')}</td></tr>`}).join(''):'<tr><td colspan="7" class="muted">No GMP violators recorded.</td></tr>'}
+$('filterViolation').onchange=renderViolators;$('searchViolators').oninput=renderViolators;
+$('exportViol').onclick=()=>{let rows=[['Date / Time','Name','Agency','Area','Violation','Remarks','Verified By']];violList().forEach(r=>{rows.push([fmt(r.timestamp),r.person,r.agency,r.area,r.violation||'',r.remarks||'',r.verifiedBy||''])});let csv=rows.map(row=>row.map(v=>'"'+String(v??'').replace(/"/g,'""')+'"').join(',')).join('\r\n');let a=document.createElement('a');a.href=URL.createObjectURL(new Blob([csv],{type:'text/csv'}));a.download='GMP_Violators.csv';a.click();URL.revokeObjectURL(a.href)};
+$('timeIn').value=nowLocal();renderRecords();
