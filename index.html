@@ -1,9 +1,10 @@
-/* GMP AND LOOSE ITEM CONTROL MONITORING - single-file app.js
-   Naglalaman ito ng CSS, HTML at lahat ng logic. Isang file lang ang kailangan. */
-
-// ---------- 1. STYLES ----------
-(function(){
-const css=`
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GMP AND LOOSE ITEM CONTROL MONITORING</title>
+<style>
 :root{--green:#176b45;--green2:#eaf5ee;--ink:#20312a;--muted:#64736b;--line:#d7e2da;--red:#b42318;--amber:#9a6700}
 *{box-sizing:border-box}body{margin:0;background:#f3f7f4;color:var(--ink);font:14px/1.45 Arial,sans-serif}
 header{background:linear-gradient(120deg,#124d35,#218052);color:white;padding:25px max(20px,calc((100% - 1200px)/2))}
@@ -33,16 +34,9 @@ table{width:100%;border-collapse:collapse;font-size:12px}th,td{padding:9px;borde
 label.check{cursor:pointer}.check input{width:18px;height:18px;flex:none}
 @media print{tr,img{page-break-inside:avoid}}
 @page{size:landscape;margin:10mm}
-`;
-const st=document.createElement('style');
-st.textContent=css;
-document.head.appendChild(st);
-document.title='GMP AND LOOSE ITEM CONTROL MONITORING';
-})();
-
-// ---------- 2. HTML MARKUP ----------
-(function(){
-const html=`
+</style>
+</head>
+<body>
 <header><h1>GMP AND LOOSE ITEM CONTROL MONITORING</h1><p>Personnel entry inspection • Loose item declaration • Independent verification</p></header>
 <main>
 <div class="tabs no-print">
@@ -141,11 +135,7 @@ const html=`
 </section>
 <footer class="muted" style="text-align:center;padding:10px">Local browser system • Records are stored on this device/browser only. Export and back up records regularly.</footer>
 </main>
-`;
-document.body.insertAdjacentHTML('afterbegin',html);
-})();
-
-// ---------- 3. LOGIC ----------
+<script>
 const checks=[
 'Facemask properly worn','Headcap properly worn and hair contained','Rubber boots clean and appropriate',
 'Gloves used where required; no tear or damage','Apron properly worn and clean','Assigned dress code followed',
@@ -237,3 +227,5 @@ $('violRows').innerHTML=l.length?l.map((r,n)=>{return `<tr><td>${n+1}</td><td>${
 $('filterViolation').onchange=renderViolators;$('searchViolators').oninput=renderViolators;
 $('exportViol').onclick=()=>{let rows=[['Date / Time','Name','Agency','Area','Violation','Remarks','Verified By']];violList().forEach(r=>{rows.push([fmt(r.timestamp),r.person,r.agency,r.area,r.violation||'',r.remarks||'',r.verifiedBy||''])});let csv=rows.map(row=>row.map(v=>'"'+String(v??'').replace(/"/g,'""')+'"').join(',')).join('\r\n');let a=document.createElement('a');a.href=URL.createObjectURL(new Blob([csv],{type:'text/csv'}));a.download='GMP_Violators.csv';a.click();URL.revokeObjectURL(a.href)};
 $('timeIn').value=nowLocal();renderRecords();
+</script>
+</body></html>
